@@ -1,0 +1,94 @@
+# ---------------------------------------------------------------------------
+# Research output and state -- NEVER commit these.
+# ---------------------------------------------------------------------------
+# Reports are written into this repo directory by cli._write_outputs(), and
+# they contain the full text of whatever you researched plus every source you
+# read. On a public repo that is both a privacy leak and a record of your
+# interests. The .json sidecar carries the complete ResearchState.
+reports/
+*.report.md
+
+# SQLite research database: questions, claims, sources, cached page text.
+# Default location is ~/.deepresearch/research.db (outside the repo), but a
+# --db flag can put one anywhere.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.deepresearch/
+research.db
+
+# ---------------------------------------------------------------------------
+# Credentials and local config
+# ---------------------------------------------------------------------------
+# This tool is designed to run on subscription auth with no API key at all.
+# These patterns exist so a stray key file can never be committed by accident.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+secrets.*
+credentials.*
+.netrc
+
+# Claude Code local state. The bundled research skills under .claude/skills/
+# ARE part of the project and must stay tracked, so this un-ignores them.
+.claude/*
+!.claude/skills/
+.claude/settings.local.json
+CLAUDE.local.md
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+# Compiled bytecode embeds the ABSOLUTE source path of the machine that built
+# it (e.g. C:\Users\<name>\...), which leaks your username on a public repo.
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib60/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+.python-version
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ---------------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

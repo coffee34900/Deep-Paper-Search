@@ -25,6 +25,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from .cli import _write_outputs
 from .engine import Config, research
+from .guardrails import WouldCostMoney, billing_risks
 from .state import ResearchState
 from .store import DEFAULT_DB, Store
 
@@ -83,6 +84,8 @@ class ResearchWorker:
         except asyncio.CancelledError:
             self.outbox.put(Event("error", "cancelled -- state was checkpointed, "
                                            "resume it from the History tab"))
+        except WouldCostMoney as exc:
+            self.outbox.put(Event("error", str(exc)))
         except Exception as exc:  # noqa: BLE001
             self.outbox.put(Event("error", f"{type(exc).__name__}: {exc}"))
         finally:
@@ -136,8 +139,9 @@ class App(ttk.Frame):
 
         self.rounds = tk.IntVar(value=4)
         self.workers = tk.IntVar(value=5)
-        self.budget = tk.DoubleVar(value=20.0)
+        self.calls = tk.IntVar(value=20)
         self.effort = tk.StringVar(value="high")
+        self.model = tk.StringVar(value="sonnet")
 
         def spin(col: int, label: str, var, frm, to, inc=1, width=6) -> None:
             cell = ttk.Frame(opts)
@@ -146,21 +150,39 @@ class App(ttk.Frame):
             ttk.Spinbox(cell, from_=frm, to=to, increment=inc, textvariable=var,
                         width=width).grid(row=1, column=0, sticky="w")
 
-        spin(0, "Max rounds", self.rounds, 1, 20)
-        spin(1, "Workers / round", self.workers, 1, 12)
-        spin(2, "Budget (USD)", self.budget, 1.0, 500.0, 5.0, 8)
+        spin(0, "Max rounds", self.rounds, 1, 12)
+        spin(1, "Workers / round", self.workers, 1, 8)
+        spin(2, "Max agent calls", self.calls, 4, 120, 2, 8)
 
         cell = ttk.Frame(opts)
-        cell.grid(row=0, column=3, padx=(0, 18), sticky="w")
+        cell.grid(row=0, column=3, padx=(0, 14), sticky="w")
         ttk.Label(cell, text="Effort").grid(row=0, column=0, sticky="w")
         ttk.Combobox(cell, textvariable=self.effort, width=8, state="readonly",
                      values=["low", "medium", "high", "xhigh", "max"]
                      ).grid(row=1, column=0, sticky="w")
 
-        self.preset = ttk.Button(opts, text="Quick preset", command=self._quick)
-        self.preset.grid(row=0, column=4, sticky="s")
-        self.deep = ttk.Button(opts, text="Deep preset", command=self._deep)
-        self.deep.grid(row=0, column=5, padx=(4, 0), sticky="s")
+        cell = ttk.Frame(opts)
+        cell.grid(row=0, column=4, padx=(0, 18), sticky="w")
+        ttk.Label(cell, text="Model").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(cell, textvariable=self.model, width=8, state="readonly",
+                     values=["sonnet", "haiku", "opus"]
+                     ).grid(row=1, column=0, sticky="w")
+
+        self.preset = ttk.Button(opts, text="Light", command=self._quick)
+        self.preset.grid(row=0, column=5, sticky="s")
+        self.deep = ttk.Button(opts, text="Thorough", command=self._deep)
+        self.deep.grid(row=0, column=6, padx=(4, 0), sticky="s")
+
+        risks = billing_risks()
+        note = ("Usage draws on your Claude plan (5-hour + weekly windows). "
+                "Nothing is billed; the run halts at your utilization cap\n"
+                "and never spends usage credits.")
+        ttk.Label(
+            opts,
+            text=note if not risks else "BILLING RISK: " + risks[0],
+            foreground="#2a7" if not risks else "#c33",
+            justify="left",
+        ).grid(row=1, column=0, columnspan=7, sticky="w", pady=(8, 0))
 
         # --- notebook
         nb = ttk.Notebook(self)
@@ -241,16 +263,20 @@ class App(ttk.Frame):
     # -- actions -----------------------------------------------------------
 
     def _quick(self) -> None:
+        """Light: cheap on plan usage, good for checking the pipeline."""
         self.rounds.set(2)
-        self.workers.set(3)
-        self.budget.set(5.0)
-        self.effort.set("high")
+        self.workers.set(2)
+        self.calls.set(10)
+        self.effort.set("medium")
+        self.model.set("sonnet")
 
     def _deep(self) -> None:
-        self.rounds.set(6)
-        self.workers.set(6)
-        self.budget.set(60.0)
-        self.effort.set("max")
+        """Thorough: still Sonnet, still plan-only, just more of it."""
+        self.rounds.set(4)
+        self.workers.set(4)
+        self.calls.set(32)
+        self.effort.set("high")
+        self.model.set("sonnet")
 
     def _start(self, resume: str | None = None) -> None:
         if self.worker.busy:
@@ -264,15 +290,19 @@ class App(ttk.Frame):
         cfg = Config(
             max_rounds=self.rounds.get(),
             max_workers_per_round=self.workers.get(),
-            max_budget_usd=self.budget.get(),
+            max_agent_calls=self.calls.get(),
             orchestrator_effort=self.effort.get(),
+            orchestrator_model=self.model.get(),
+            worker_model=self.model.get(),
+            verifier_model=self.model.get(),
         )
         self.result = None
         self._clear(self.log)
         self._clear(self.report)
         self._append(self.log, f"question: {question or resume}\n"
                                f"rounds<={cfg.max_rounds} workers={cfg.max_workers_per_round} "
-                               f"budget=${cfg.max_budget_usd:.0f} effort={cfg.orchestrator_effort}\n"
+                               f"calls<={cfg.max_agent_calls} model={cfg.orchestrator_model} "
+                               f"effort={cfg.orchestrator_effort}\n"
                                + "-" * 60 + "\n")
         self.nb.select(0)
         self._set_running(True)
@@ -390,7 +420,7 @@ class App(ttk.Frame):
             f"round {state.round}  |  {len(state.claims)} claims  |  "
             f"{len(state.sources)} sources  |  "
             f"{len(state.unresolved_contradictions())} conflicts  |  "
-            f"${state.total_cost_usd:.2f}"
+            f"~${state.total_cost_usd:.2f} est. (not billed)"
         )
 
     # -- event pump --------------------------------------------------------

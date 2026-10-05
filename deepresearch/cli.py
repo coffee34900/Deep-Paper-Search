@@ -102,8 +102,7 @@ def main(argv: list[str] | None = None) -> int:
             research(args.question or "", cfg, store, resume_run_id=args.resume)
         )
     except WouldCostMoney as exc:
-        print(f"
-{exc}", file=sys.stderr)
+        print(f"\n{exc}", file=sys.stderr)
         return 3
     except KeyboardInterrupt:
         print("\ninterrupted -- state checkpointed, resume with --resume", file=sys.stderr)
